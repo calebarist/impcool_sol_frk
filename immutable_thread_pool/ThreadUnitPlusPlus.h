@@ -4,8 +4,6 @@
 #include <functional>
 #include <vector>
 #include <condition_variable>
-#include <stop_token>
-#include <syncstream>
 #include <memory>
 #include <deque>
 #include "ThreadTaskSource.h"
@@ -19,26 +17,28 @@ namespace imp
     /// A low-level granular kind of access is desirable here, if possible. </summary>
     /// <remarks> This class is also useable on it's own, if so desired. There are two mutually exclusive
     /// pause conditions, each with their own setter function. Non-copyable, <b>is moveable! (move-construct and move-assign)</b></remarks>
+    template<bool DoLowUtilSleep = false, unsigned MillisecondCount = 3>
     class ThreadUnitPlusPlus
     {
         /// <summary> Constant used to store the loop delay time period when no tasks are present. </summary>
         static constexpr std::chrono::milliseconds EmptyWaitTime{ std::chrono::milliseconds(20) };
     public:
-        using Thread_t = std::jthread;
+        using Thread_t = std::thread;
         using AtomicBool_t = std::atomic<bool>;
         using UniquePtrThread_t = std::unique_ptr<Thread_t>;
 
         // Alias for the ThreadTaskSource which provides a container and some operations.
-        using TaskOpsProvider_t = imp::ThreadTaskSource;
+        using TaskOpsProvider_t = ThreadTaskSource;
         using TaskContainer_t = decltype(TaskOpsProvider_t::TaskList);
 
     private:
         struct ThreadConditionals
         {
-	        imp::BoolCvPack OrderedPausePack;
-	        imp::BoolCvPack UnorderedPausePack;
-	        imp::BoolCvPack PauseCompletedPack;
+            BoolCvPack OrderedPausePack;
+            BoolCvPack UnorderedPausePack;
+            BoolCvPack PauseCompletedPack;
             //BoolCvPack isStopRequested;
+            ThreadConditionals() = default;
             // Waits for both pause requests to be false.
             void WaitForBothPauseRequestsFalse()
             {
@@ -51,7 +51,7 @@ namespace imp
                 UnorderedPausePack.task_running_cv.notify_all();
                 PauseCompletedPack.task_running_cv.notify_all();
             }
-            void SetStopSource(const std::stop_source sts)
+            void SetStopSource(AtomicBool_t* sts)
             {
                 PauseCompletedPack.stop_source = sts;
                 OrderedPausePack.stop_source = sts;
@@ -71,10 +71,10 @@ namespace imp
         TaskOpsProvider_t m_taskList{};
 
         // Stop source for the thread
-        std::stop_source m_stopSource{};
+        AtomicBool_t m_stopSource{ false };
     public:
         /// <summary> Ctor creates the thread. </summary>
-        ThreadUnitPlusPlus(const imp::ThreadTaskSource tasks = {})
+        ThreadUnitPlusPlus(TaskOpsProvider_t tasks = {})
         {
             m_taskList = tasks;
             CreateThread(m_taskList, false);
@@ -83,25 +83,6 @@ namespace imp
         ~ThreadUnitPlusPlus()
         {
             DestroyThread();
-        }
-
-        // Implemented move operations.
-        ThreadUnitPlusPlus(ThreadUnitPlusPlus&& other) noexcept
-	        : m_conditionalsPack(std::move(other.m_conditionalsPack)),
-	          m_workThreadObj(std::move(other.m_workThreadObj)),
-	          m_taskList(std::move(other.m_taskList)),
-	          m_stopSource(std::move(other.m_stopSource))
-        {
-        }
-        ThreadUnitPlusPlus& operator=(ThreadUnitPlusPlus&& other) noexcept
-        {
-            if (this == &other)
-                return *this;
-            m_conditionalsPack = std::move(other.m_conditionalsPack);
-            m_workThreadObj = std::move(other.m_workThreadObj);
-            m_taskList = std::move(other.m_taskList);
-            m_stopSource = std::move(other.m_stopSource);
-            return *this;
         }
         // Deleted copy operations.
         ThreadUnitPlusPlus& operator=(const ThreadUnitPlusPlus& other) = delete;
@@ -130,7 +111,7 @@ namespace imp
         /// <summary> Generally if the thread is not running, there is an error state or it is destructing. </summary>
         [[nodiscard]] bool IsRunning() const
         {
-            return m_workThreadObj != nullptr && !m_stopSource.stop_requested();
+            return m_workThreadObj != nullptr && !m_stopSource;
         }
 
         /// <summary>
@@ -168,16 +149,18 @@ namespace imp
 
         /// <summary> Returns a copy of the last set immutable task list, it should mirror
         /// the tasks running on the thread. </summary>
-        [[nodiscard]] auto GetTaskSource() const
+        [[nodiscard]]
+        auto GetTaskSource() const noexcept -> ThreadTaskSource
         {
             return m_taskList;
         }
 
         /// <summary> Stops the thread, replaces the task list, creates the thread again. </summary>
-        void SetTaskSource(const ThreadTaskSource newTaskList)
+        void SetTaskSource(ThreadTaskSource newTaskList)
         {
             StartDestruction();
             WaitForDestruction();
+            m_stopSource = false;
             m_taskList = newTaskList;
             CreateThread(newTaskList);
         }
@@ -194,7 +177,7 @@ namespace imp
     private:
         /// <summary> Starts the work thread running, to execute each task in the list infinitely. </summary>
         /// <returns> true on thread created, false otherwise (usually thread already created). </returns>
-        bool CreateThread(const ThreadTaskSource tasks, const bool isPausedOnStart = false)
+        bool CreateThread(ThreadTaskSource tasks, const bool isPausedOnStart = false)
         {
             if (m_workThreadObj == nullptr)
             {
@@ -203,11 +186,10 @@ namespace imp
                 m_conditionalsPack.OrderedPausePack.UpdateState(isPausedOnStart);
                 m_conditionalsPack.UnorderedPausePack.UpdateState(false);
                 //make thread obj
-                m_workThreadObj = std::make_unique<Thread_t>([=, this](std::stop_token st) { threadPoolFunc(st, tasks.TaskList); });
-                //make local handle to stop_source for thread
-                m_stopSource = m_workThreadObj->get_stop_source();
+                auto& st = m_stopSource;
+                m_workThreadObj = std::make_unique<Thread_t>([&st, tasks, this]() { threadPoolFunc(st, tasks); });
                 //update conditionals pack to have stop handle
-                m_conditionalsPack.SetStopSource(m_stopSource);
+                m_conditionalsPack.SetStopSource(&m_stopSource);
                 return true;
             }
             return false;
@@ -218,8 +200,9 @@ namespace imp
         /// If you want the list of tasks in-progress to run until the end, then request an ordered pause first! </remarks>
         void StartDestruction()
         {
-            m_stopSource.request_stop();
+            m_stopSource = true;
             m_conditionalsPack.Notify();
+            m_taskList = {};
         }
 
         /// <summary> Joins the work thread to the current thread and waits. </summary>
@@ -236,9 +219,9 @@ namespace imp
         }
 
         /// <summary> The worker function, on the created running thread. </summary>
-        /// <param name="stopToken"> Passed in the std::jthread automatically at creation. </param>
-        /// <param name="tasks"> List of tasks copied into this worker function, it is not mutated in-use. </param>
-        void threadPoolFunc(const std::stop_token stopToken, const TaskContainer_t tasks)
+        /// <param name="stopToken"> Passed in the std::thread automatically at creation. </param>
+        /// <param name="taskList"> List of tasks copied into this worker function, it is not mutated in-use. </param>
+        void threadPoolFunc(const std::atomic<bool>& stopToken, ThreadTaskSource taskList)
         {
             const auto TestAndWaitForPauseEither = [](ThreadConditionals& pauseObj)
             {
@@ -266,8 +249,9 @@ namespace imp
                     pauseObj.UnorderedPausePack.UpdateState(false);
                 }
             };
+            auto& tasks = taskList.TaskList;
             // While not is stop requested.
-            while (!stopToken.stop_requested())
+            while (!stopToken.load(std::memory_order_relaxed))
             {
                 //test for ordered pause
                 TestAndWaitForPauseEither(m_conditionalsPack);
@@ -283,10 +267,14 @@ namespace imp
                     TestAndWaitForPauseUnordered(m_conditionalsPack);
                     //double check outer condition here, as this may be long-running,
                     //causes destruction to occur unordered.
-                    if (stopToken.stop_requested())
+                    if (stopToken.load(std::memory_order_seq_cst))
                         break;
                     // run the task
                     currentTask();
+                }
+                if constexpr (DoLowUtilSleep)
+                {
+                    //TODO
                 }
             }
         }

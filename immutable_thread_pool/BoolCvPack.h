@@ -6,9 +6,13 @@
 
 namespace imp
 {
-    /// <summary> A pack of types used with a condition variable, and some helper functions to aid in
-    /// operating on them to perform a common task (WaitForFalse, WaitForTrue, get / update etc.) </summary>
-    /// <remarks> Default constructed object has is_condition_true set to false. Copyable, Movable. </remarks>
+    /// <summary>
+    /// A pack of types used with a condition variable, and some helper functions to aid in operating on them to
+    /// perform a common task (WaitForFalse, WaitForTrue, get / update etc.)
+    /// </summary>
+    /// <remarks>
+    /// Default constructed object has is_condition_true set to false. Copyable, Movable (value of condition and ptr to stop source).
+    /// </remarks>
     struct BoolCvPack
     {
         // Some type aliases used in the condition variable packs, and possibly elsewhere.
@@ -19,7 +23,7 @@ namespace imp
         // An alias for the scoped lock type used to lock the cv mutex when calling wait() on the condition var.
         using WaiterLock_t = std::unique_lock<std::mutex>;
         // Stop source can be used to cancel the wait operations.
-        using StopSource_t = std::stop_source;
+        using StopSource_t = std::atomic<bool>*;
     public:
         /// <summary> The shared data condition flag holding the notifiable state. </summary>
         std::atomic<bool> is_condition_true{ false };
@@ -28,19 +32,19 @@ namespace imp
         /// <summary> The mutex used for controlling access to updating the shared data conditions. </summary>
         std::mutex running_mutex{};
         // Stop source used to cancel the wait operations.
-        StopSource_t stop_source{ std::nostopstate };
+        StopSource_t stop_source{};
     public:
-        BoolCvPack() noexcept = default;
-        ~BoolCvPack() noexcept = default;
+        BoolCvPack() = default;
+        ~BoolCvPack() = default;
         BoolCvPack(const BoolCvPack& other)
         {
             stop_source = other.stop_source;
-	        is_condition_true.store(other.is_condition_true.load());
+            is_condition_true.store(other.is_condition_true.load());
         }
         BoolCvPack(BoolCvPack&& other) noexcept
         {
             stop_source = other.stop_source;
-	        is_condition_true.store(other.is_condition_true.load());
+            is_condition_true.store(other.is_condition_true.load());
         }
         BoolCvPack& operator=(const BoolCvPack& other)
         {
@@ -58,7 +62,6 @@ namespace imp
             is_condition_true.store(other.is_condition_true.load());
             return *this;
         }
-    public:
         /// <summary> Waits for a boolean SharedData atomic to return <b>false</b>.
         /// <b>This uses the condition_variable's "wait()" function</b> and so it will only
         /// wake up and check the condition when another thread calls <c>"notify_one()"</c> or
@@ -68,8 +71,7 @@ namespace imp
             WaiterLock_t pause_lock(running_mutex);
             task_running_cv.wait(pause_lock, [&]() -> bool
                 {
-                    const bool stopPossibleAndRequested = stop_source.stop_possible() && stop_source.stop_requested();
-                    return !is_condition_true || stopPossibleAndRequested;
+                    return !is_condition_true || *stop_source;
                 });
         }
         /// <summary> Waits for a boolean SharedData atomic to return <b>true</b>.
@@ -81,8 +83,7 @@ namespace imp
             WaiterLock_t pause_lock{ running_mutex };
             task_running_cv.wait(pause_lock, [&]() -> bool
                 {
-                    const bool stopPossibleAndRequested = stop_source.stop_possible() && stop_source.stop_requested();
-                    return is_condition_true || stopPossibleAndRequested;
+                    return is_condition_true || *stop_source;
                 });
         }
         /// <summary> Called to update the shared state variable. Notifies all waiting threads

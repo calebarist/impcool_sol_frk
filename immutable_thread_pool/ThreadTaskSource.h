@@ -3,36 +3,28 @@
 #include <memory>
 #include <functional>
 #include <deque>
-#include <ranges>
 
 namespace imp
 {
-    /// <summary> Concept for a range of std::function or something convertible to it. </summary>
-    template<typename FnRange_t>
-    concept IsFnRange = requires(FnRange_t & t)
+    /// <summary>
+    /// ThreadTaskSource provides a container that holds async tasks, and some functions
+    /// for operating on it.
+    /// </summary>
+    class ThreadTaskSource
     {
-        { std::ranges::range<FnRange_t> };
-        { std::convertible_to<typename FnRange_t::value_type, std::function<void()>> };
-    };
-
-	/// <summary>
-	/// ThreadTaskSource provides a container that holds async tasks, and some functions
-	/// for operating on it.
-	/// </summary>
-	class ThreadTaskSource
-	{
-	public:
+    public:
         using TaskInfo = std::function<void()>;
-	public:
+    public:
         /// <summary> Public data member, allows direct access to the task source. </summary>
         std::deque<TaskInfo> TaskList{};
-	public:
+    public:
         ThreadTaskSource() = default;
-        ThreadTaskSource(const IsFnRange auto &taskList)
+        ThreadTaskSource(const std::vector<std::function<void()>>& taskList)
         {
-            TaskList = taskList;
+            TaskList = {};
+            TaskList.assign(std::cbegin(taskList), std::cend(taskList));
         }
-        ThreadTaskSource(const TaskInfo &&ti)
+        ThreadTaskSource(const TaskInfo&& ti)
         {
             PushInfiniteTaskBack(ti);
         }
@@ -50,7 +42,7 @@ namespace imp
             }
             else
             {
-                TaskList.emplace_back(std::function<void()>([taskFn, args...] { taskFn(args...); }));
+                TaskList.emplace_back(std::function<void()>([taskFn, args...]{ taskFn(args...); }));
             }
         }
 
@@ -68,18 +60,30 @@ namespace imp
             }
             else
             {
-                TaskList.emplace_front(std::function<void()>([task, args...] { task(args...); }));
+                TaskList.emplace_front(std::function<void()>([task, args...]{ task(args...); }));
             }
         }
 
-        void ResetTaskList(const IsFnRange auto &taskContainer)
+        void ResetTaskList(const std::vector<std::function<void()>>& taskContainer)
         {
             TaskList = {};
-            for( const auto &elem : taskContainer)
+            for (const auto& elem : taskContainer)
             {
                 TaskList.emplace_back(elem);
             }
         }
-	};
+
+        /**
+         * \brief Call operator, calls all of the contained tasks in succession.
+         */
+        void operator()() const
+        {
+            for (const auto& elem : TaskList)
+            {
+                if (elem)
+                    elem();
+            }
+        }
+    };
 
 }

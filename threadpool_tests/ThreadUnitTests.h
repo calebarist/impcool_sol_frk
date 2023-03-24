@@ -2,7 +2,6 @@
 #include "pch.h"
 #include "CppUnitTest.h"
 #include "../immutable_thread_pool/ThreadUnitPlusPlus.h"
-#include "../immutable_thread_pool/ThreadPooler.h"
 
 using namespace Microsoft::VisualStudio::CppUnitTestFramework;
 
@@ -30,9 +29,7 @@ namespace threadpooltests
 					const auto TaskLam = [&](const auto taskNumber) -> void
 					{
 						constexpr auto SleepTime{ std::chrono::milliseconds(250) };
-						std::osyncstream os(std::cout);
-						os << "Task with args: [" << taskNumber << "] running...\n";
-						os.emit();
+						std::cout << "Task with args: [" << taskNumber << "] running...\n";
 						std::this_thread::sleep_for(SleepTime);
 					};
 					tc.PushInfiniteTaskBack(TaskLam, i);

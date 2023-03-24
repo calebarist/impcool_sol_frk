@@ -2,7 +2,6 @@
 #include "CppUnitTest.h"
 #include "ThreadUnitTests.h"
 #include "../immutable_thread_pool/ThreadUnitPlusPlus.h"
-#include "../immutable_thread_pool/ThreadPooler.h"
 
 using namespace Microsoft::VisualStudio::CppUnitTestFramework;
 
@@ -93,24 +92,24 @@ namespace threadpooltests
 		//	}
 		//}
 
-		TEST_METHOD(TestPassingArgs)
-		{
-			using namespace std::chrono_literals;
-			using namespace std::chrono;
-			static constexpr auto TimeDelay{ 1s };
-			imp::ThreadPooler tp{};
-			//tp.CreateAll();
-			std::atomic<bool> testCondition{ false };
-			tp.PushApportionedTask([&]()
-				{
-					testCondition = true;
-					std::this_thread::sleep_for(TimeDelay);
-				});
-			std::this_thread::sleep_for(TimeDelay);
-			tp.SetPauseThreadsOrdered(true);
-			tp.WaitForPauseCompleted();
-			tp.DestroyAll();
-			Assert::IsTrue(testCondition, L"Test condition was not set to true in the thread!\n");
-		}
+		//TEST_METHOD(TestPassingArgs)
+		//{
+		//	using namespace std::chrono_literals;
+		//	using namespace std::chrono;
+		//	static constexpr auto TimeDelay{ 1s };
+		//	imp::ThreadPooler tp{};
+		//	//tp.CreateAll();
+		//	std::atomic<bool> testCondition{ false };
+		//	tp.PushApportionedTask([&]()
+		//		{
+		//			testCondition = true;
+		//			std::this_thread::sleep_for(TimeDelay);
+		//		});
+		//	std::this_thread::sleep_for(TimeDelay);
+		//	tp.SetPauseThreadsOrdered(true);
+		//	tp.WaitForPauseCompleted();
+		//	tp.DestroyAll();
+		//	Assert::IsTrue(testCondition, L"Test condition was not set to true in the thread!\n");
+		//}
 	};
 }

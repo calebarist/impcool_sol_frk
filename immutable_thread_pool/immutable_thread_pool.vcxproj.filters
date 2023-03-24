@@ -26,12 +26,6 @@
     <ClInclude Include="BoolCvPack.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ThreadConcepts.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="ThreadPooler.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="ThreadUnitPlusPlus.h">
       <Filter>Header Files</Filter>
     </ClInclude>
